@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Building a Boosted Product Search Engine in Rust</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Mona+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* Qdrant brand: Amaranth #DC244C, Neon Blue #6047FF, Black #0B0F19, White */
+    --bg: #FFFFFF;
+    --bg-alt: #F4F4F8;
+    --panel-border: #E3E3EC;
+    --ink: #0B0F19;
+    --ink-soft: #5B5F72;
+    --accent: #DC244C;
+    --accent-soft: #FBE1E7;
+    --accent-ink: #FFFFFF;
+    --accent2: #6047FF;
+    --accent2-soft: #E7E3FF;
+    --nav-bg: rgba(255,255,255,0.92);
+
+    --code-bg: #0B0F19;
+    --code-ink: #E7E8F2;
+    --code-comment: #6B7186;
+    --code-accent: #FF6E8F;
+    --code-keyword: #8F7FFF;
+    --code-border: #1C2236;
+
+    --serif: "Mona Sans", "Helvetica Neue", Arial, sans-serif;
+    --mono: "JetBrains Mono", "SFMono-Regular", Consolas, Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg: #0B0F19;
+      --bg-alt: #121729;
+      --panel-border: #232A42;
+      --ink: #F2F3F8;
+      --ink-soft: #9A9FB5;
+      --accent: #FF4F76;
+      --accent-soft: #2C1521;
+      --accent-ink: #0B0F19;
+      --accent2: #8F7FFF;
+      --accent2-soft: #1E1B3A;
+      --nav-bg: rgba(11,15,25,0.88);
+    }
+  }
+
+  :root[data-theme="dark"]{
+    --bg: #0B0F19;
+    --bg-alt: #121729;
+    --panel-border: #232A42;
+    --ink: #F2F3F8;
+    --ink-soft: #9A9FB5;
+    --accent: #FF4F76;
+    --accent-soft: #2C1521;
+    --accent-ink: #0B0F19;
+    --accent2: #8F7FFF;
+    --accent2-soft: #1E1B3A;
+    --nav-bg: rgba(11,15,25,0.88);
+  }
+
+  *{ box-sizing: border-box; }
+
+  body{
+    margin:0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--serif);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a{ color: var(--accent); text-decoration-thickness: 1px; }
+
+  /* ---------- NAV ---------- */
+  header.topnav{
+    position: sticky;
+    top:0;
+    z-index: 50;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap: 1rem;
+    padding: 0.85rem 1.5rem;
+    background: var(--nav-bg);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--panel-border);
+    font-family: var(--mono);
+  }
+  .brand{
+    display:flex;
+    align-items:baseline;
+    gap:0.5rem;
+    font-weight:600;
+    font-size: 0.92rem;
+    white-space:nowrap;
+    color: var(--ink);
+    text-decoration:none;
+  }
+  .brand .dollar{ color: var(--accent); }
+  nav.links{
+    display:flex;
+    gap: 1.1rem;
+    overflow-x:auto;
+    scrollbar-width:none;
+    flex: 1 1 auto;
+    justify-content:center;
+  }
+  nav.links::-webkit-scrollbar{ display:none; }
+  nav.links a{
+    color: var(--ink-soft);
+    text-decoration:none;
+    font-size: 0.82rem;
+    white-space:nowrap;
+    padding: 0.25rem 0.1rem;
+    border-bottom: 2px solid transparent;
+  }
+  nav.links a:hover{ color: var(--ink); border-bottom-color: var(--accent); }
+
+  #theme-toggle{
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    border: 1px solid var(--panel-border);
+    background: var(--bg-alt);
+    color: var(--ink);
+    padding: 0.4rem 0.7rem;
+    border-radius: 999px;
+    cursor:pointer;
+    white-space:nowrap;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  #theme-toggle:hover{ border-color: var(--accent); }
+  #theme-toggle:focus-visible, a:focus-visible, button:focus-visible{
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* ---------- LAYOUT ---------- */
+  main{
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 0 1.5rem 6rem;
+  }
+
+  section{
+    padding-top: 3.2rem;
+    scroll-margin-top: 4.5rem;
+  }
+  section + section{
+    border-top: 1px solid var(--panel-border);
+  }
+
+  h1{
+    font-size: clamp(2rem, 5vw, 2.9rem);
+    line-height: 1.12;
+    margin: 0 0 1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  h2{
+    font-size: 1.55rem;
+    font-weight: 600;
+    margin: 0 0 0.9rem;
+    display:flex;
+    align-items:baseline;
+    gap: 0.6rem;
+  }
+  h2 .num{
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 1rem;
+    font-weight: 600;
+  }
+  h3{
+    font-size: 1.12rem;
+    font-weight: 600;
+    margin: 1.8rem 0 0.6rem;
+  }
+  p{ margin: 0 0 1rem; color: var(--ink); }
+  .lede{
+    font-size: 1.12rem;
+    color: var(--ink-soft);
+    max-width: 62ch;
+  }
+
+  /* ---------- HERO ---------- */
+  .hero{
+    padding-top: 3rem;
+    display:grid;
+    grid-template-columns: 1fr;
+    gap: 1.8rem;
+  }
+  .hero-terminal{
+    border: 1px solid var(--code-border);
+    background: var(--code-bg);
+    border-radius: 10px;
+    overflow:hidden;
+    box-shadow: 0 12px 30px -18px rgba(0,0,0,0.5);
+  }
+  .hero-terminal .bar{
+    display:flex;
+    gap:0.4rem;
+    padding: 0.6rem 0.8rem;
+    border-bottom: 1px solid var(--code-border);
+  }
+  .hero-terminal .dot{ width:9px; height:9px; border-radius:50%; background:#4c4a3c; }
+  .hero-terminal pre{
+    margin:0;
+    padding: 1rem 1.1rem 1.2rem;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--code-ink);
+    overflow-x:auto;
+    line-height:1.55;
+  }
+  .hero-terminal .muted{ color: var(--code-comment); }
+  .hero-terminal .hi{ color: var(--code-accent); }
+
+  .stack-tags{
+    display:flex;
+    flex-wrap:wrap;
+    gap: 0.5rem;
+    margin: 1.4rem 0 0.4rem;
+  }
+  .stack-tags span{
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    padding: 0.3rem 0.65rem;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--ink);
+    border: 1px solid var(--panel-border);
+  }
+  .stack-tags span:nth-child(even){
+    background: var(--accent2-soft);
+  }
+
+  /* ---------- CODE ---------- */
+  .code-panel{
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 10px;
+    margin: 1.1rem 0 1.5rem;
+    overflow:hidden;
+  }
+  .code-panel .filename{
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--code-comment);
+    padding: 0.55rem 1rem;
+    border-bottom: 1px solid var(--code-border);
+    display:flex;
+    justify-content:space-between;
+  }
+  .code-panel pre{
+    margin:0;
+    padding: 1rem 1.15rem;
+    overflow-x:auto;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    line-height: 1.65;
+    color: var(--code-ink);
+  }
+  .cm{ color: var(--code-comment); }
+  .kw{ color: var(--code-keyword); }
+  .hi{ color: var(--code-accent); }
+
+  /* ---------- TREE ---------- */
+  .tree-panel{
+    background: var(--bg-alt);
+    border: 1px dashed var(--panel-border);
+    border-radius: 10px;
+    padding: 1rem 1.2rem;
+    margin: 1.1rem 0 1.6rem;
+  }
+  .tree-panel .label{
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--ink-soft);
+    margin-bottom: 0.5rem;
+    display:block;
+  }
+  .tree-panel pre{
+    margin:0;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    line-height: 1.6;
+    color: var(--ink);
+    white-space:pre;
+    overflow-x:auto;
+  }
+  .tree-panel .new{ color: var(--accent); font-weight:600; }
+
+  /* ---------- CALLOUT ---------- */
+  .concept{
+    border-left: 3px solid var(--accent);
+    background: var(--bg-alt);
+    padding: 1rem 1.2rem;
+    border-radius: 0 8px 8px 0;
+    margin: 1.4rem 0 1.6rem;
+  }
+  .concept .tag{
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--accent);
+    display:block;
+    margin-bottom: 0.4rem;
+  }
+  .concept p:last-child{ margin-bottom:0; }
+  .concept code{
+    font-family: var(--mono);
+    background: var(--accent-soft);
+    padding: 0.05rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.88em;
+  }
+
+  code.inline{
+    font-family: var(--mono);
+    background: var(--bg-alt);
+    padding: 0.05rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.88em;
+    border: 1px solid var(--panel-border);
+  }
+
+  ul, ol{ padding-left: 1.3rem; }
+  li{ margin-bottom: 0.4rem; }
+
+  footer{
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 4rem;
+    color: var(--ink-soft);
+    font-size: 0.85rem;
+    border-top: 1px solid var(--panel-border);
+  }
+
+  @media (max-width: 640px){
+    nav.links{ display:none; }
+    .brand{ font-size: 0.8rem; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topnav">
+  <a class="brand" href="#top"><span class="dollar">$</span> hm-search</a>
+  <nav class="links">
+    <a href="#idea">Idea</a>
+    <a href="#setup">Setup</a>
+    <a href="#embedder">Embedder</a>
+    <a href="#store">Qdrant store</a>
+    <a href="#rag">RAG</a>
+    <a href="#assemble">Assemble</a>
+    <a href="#run">Run it</a>
+  </nav>
+  <button id="theme-toggle" type="button" aria-label="Toggle dark mode">◑ theme</button>
+</header>
+
+<main id="top">
+
+  <section class="hero" aria-labelledby="hero-title">
+    <div>
+      <h1 id="hero-title">A boosted product search engine, built line by line in Rust</h1>
+      <p class="lede">We'll turn a folder full of H&amp;M product listings into something you can query in plain English — "summer dress for a wedding" — and get back ranked results that account for more than just meaning. Along the way you'll write a small embedding wrapper, a Qdrant client, and a retrieval-augmented generation (RAG) layer that hands the results to a local LLM.</p>
+      <div class="stack-tags">
+        <span>fastembed</span>
+        <span>qdrant-client</span>
+        <span>rig + ollama</span>
+        <span>clap</span>
+        <span>tokio</span>
+      </div>
+    </div>
+    <div class="hero-terminal">
+      <div class="bar"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+      <pre><span class="muted">$</span> cargo run -- <span class="hi">"summer dress for a wedding"</span>
+
+🔎 Query: "summer dress for a wedding"
+
+Rank ID            Product                         Score     Boosted   Popularity  Recency
+--------------------------------------------------------------------------------------
+1   0912345678    Floral Wrap Midi Dress          0.7421    0.7801    0.612       0.540
+2   0987654321    Linen A-Line Sundress           0.7188    0.7519    0.480       0.398
+
+🤖 Answer:
+The Floral Wrap Midi Dress is a strong pick for a summer
+wedding — it's lightweight, flattering, and currently
+trending in popularity...</pre>
+    </div>
+  </section>
+
+  <section id="idea">
+    <h2><span class="num">1</span> The idea, before the code</h2>
+    <p>Two ingredients make this project work, and it's worth separating them before you write a single line of Rust.</p>
+    <p><strong>Semantic search.</strong> Instead of matching keywords, we turn both the products and the search query into vectors — long lists of numbers that capture meaning — using an embedding model. Products with a similar <em>meaning</em> to the query end up with vectors that point in a similar direction. Qdrant is the database that stores those vectors and finds the closest matches.</p>
+    <p><strong>Boosting.</strong> The closest match by meaning isn't always the best result to show a shopper. A dress nobody buys, or one that's about to be discontinued, probably shouldn't outrank a near-identical, popular, recently-added one. So after Qdrant finds semantically close products, we nudge the ranking using two extra numbers already stored alongside each product: <code class="inline">popularity</code> and <code class="inline">recency</code>.</p>
+    <p>The formula is simple addition:</p>
+    <div class="code-panel">
+      <div class="filename">the boosting formula</div>
+      <pre>boosted_score = semantic_similarity
+              + popularity_weight * popularity
+              + recency_weight   * recency</pre>
+    </div>
+    <p>Everything we build from here is really just: embed the query → ask Qdrant to apply that formula → hand the top results to an LLM so it can answer in a sentence instead of a table.</p>
+  </section>
+
+  <section id="setup">
+    <h2><span class="num">2</span> Setting up the project</h2>
+    <p>Start with a normal binary crate:</p>
+    <div class="code-panel">
+      <div class="filename">terminal</div>
+      <pre>cargo new hm-search
+cd hm-search</pre>
+    </div>
+    <div class="tree-panel">
+      <span class="label">project so far</span>
+      <pre>hm-search/
+├── Cargo.toml
+└── src/
+    └── main.rs</pre>
+    </div>
+    <p>We'll split the logic across four files instead of cramming everything into <code class="inline">main.rs</code>. Each one has a single job:</p>
+    <ul>
+      <li><code class="inline">embedder.rs</code> — turns text into a 384-number vector.</li>
+      <li><code class="inline">qdrant_store.rs</code> — talks to Qdrant, applies the boosting formula, and shapes the results into a <code class="inline">Product</code> struct.</li>
+      <li><code class="inline">rag.rs</code> — hands the retrieved products to a local LLM through Ollama.</li>
+      <li><code class="inline">main.rs</code> — the CLI: parses arguments and wires the other three together.</li>
+    </ul>
+    <p>Create the empty files and declare them as modules:</p>
+    <div class="code-panel">
+      <div class="filename">terminal</div>
+      <pre>touch src/embedder.rs src/qdrant_store.rs src/rag.rs</pre>
+    </div>
+    <div class="code-panel">
+      <div class="filename">src/main.rs</div>
+      <pre><span class="cm">// tell Rust these files are part of the crate</span>
+<span class="kw">mod</span> embedder;
+<span class="kw">mod</span> qdrant_store;
+<span class="kw">mod</span> rag;</pre>
+    </div>
+    <div class="tree-panel">
+      <span class="label">project so far</span>
+      <pre>hm-search/
+├── Cargo.toml
+└── src/
+    ├── main.rs
+    ├── <span class="new">embedder.rs</span>
+    ├── <span class="new">qdrant_store.rs</span>
+    └── <span class="new">rag.rs</span></pre>
+    </div>
+    <p>And the dependencies we'll lean on across those files:</p>
+    <div class="code-panel">
+      <div class="filename">Cargo.toml</div>
+      <pre>[package]
+name = <span class="hi">"hm-rag-rust"</span>
+version = <span class="hi">"0.1.0"</span>
+edition = <span class="hi">"2024"</span>
+
+[dependencies]
+<span class="cm"># async runtime</span>
+tokio = { version = <span class="hi">"1"</span>, features = [<span class="hi">"full"</span>] }
+anyhow = <span class="hi">"1"</span>
+
+<span class="cm"># Rust Qdrant client (talks gRPC on port 6334, NOT the 6333 HTTP port
+# the Python `qdrant-client` used).</span>
+qdrant-client = <span class="hi">"1.19.0"</span>
+
+<span class="cm"># Local embedding model - runs BAAI/bge-small-en-v1.5 (384-dim) via ONNX,
+# same model the Python side used through `sentence-transformers`.</span>
+fastembed = <span class="hi">"4"</span>
+
+<span class="cm"># Rig - the LLM framework, mirrors the rag_ollama example.</span>
+rig = <span class="hi">"0.42.0"</span>
+
+serde = { version = <span class="hi">"1"</span>, features = [<span class="hi">"derive"</span>] }
+serde_json = <span class="hi">"1"</span>
+clap = { version = <span class="hi">"4"</span>, features = [<span class="hi">"derive"</span>] }</pre>
+    </div>
+    <div class="concept">
+      <span class="tag">why anyhow?</span>
+      <p>Rust normally forces every function to name its exact error type. <code>anyhow::Result&lt;T&gt;</code> is a shortcut for application code (as opposed to library code): it lets you use <code>?</code> to bubble up errors from Qdrant, fastembed, and Ollama alike without writing a custom error enum that wraps all three. You'll see <code>Result&lt;T&gt;</code> everywhere in this project — that's <code>anyhow::Result</code>, imported once at the top of each file.</p>
+    </div>
+    <div class="concept">
+      <span class="tag">serde, unused (so far)</span>
+      <p><code>serde</code> and <code>serde_json</code> are in the dependency list but nothing we've written yet calls into them directly — Qdrant's client uses them internally to (de)serialize payload values, and they're handy to have on hand if you later want to serialize a <code>Product</code> to JSON yourself, e.g. for an HTTP API on top of this CLI.</p>
+    </div>
+  </section>
+
+  <section id="embedder">
+    <h2><span class="num">3</span> Turning text into vectors</h2>
+    <p>This file has exactly one job: load an embedding model once, and use it to turn a string into a vector of numbers. We reach for <code class="inline">fastembed</code>, which ships a model called BGE-small-en-v1.5 — small enough to run on a laptop CPU, and, conveniently, the same model whose vectors are already sitting in the Qdrant collection we're querying against. Both sides need to speak the same "language" of numbers, or the distances between vectors are meaningless.</p>
+    <h3>The struct and constructor</h3>
+    <div class="code-panel">
+      <div class="filename">src/embedder.rs</div>
+      <pre><span class="kw">use</span> anyhow::Result;
+<span class="kw">use</span> fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+
+<span class="kw">pub struct</span> Embedder {
+    model: TextEmbedding,
+}
+
+<span class="kw">impl</span> Embedder {
+    <span class="cm">/// Downloads (first run only, cached after) and loads the model.</span>
+    <span class="kw">pub fn</span> new() -&gt; Result&lt;Self&gt; {
+        <span class="kw">let</span> model = TextEmbedding::try_new(
+            InitOptions::new(EmbeddingModel::BGESmallENV15)
+                .with_show_download_progress(<span class="hi">true</span>),
+        )?;
+
+        Ok(Self { model })
+    }
+}</pre>
+    </div>
+    <p>Nothing unusual yet: a struct that owns the loaded model, and a constructor that downloads and initializes it. Loading a model is the slow part, so we only do it once, in <code class="inline">main</code>, and reuse the same <code class="inline">Embedder</code> for every query.</p>
+    <h3>Embedding a query</h3>
+    <div class="code-panel">
+      <div class="filename">src/embedder.rs (continued)</div>
+      <pre>    <span class="cm">/// Embed a single query string.</span>
+    <span class="kw">pub fn</span> embed_query(&amp;<span class="kw">self</span>, text: &amp;str) -&gt; Result&lt;Vec&lt;f32&gt;&gt; {
+        <span class="kw">let mut</span> embeddings = <span class="kw">self</span>.model.embed(vec![text.to_string()], <span class="kw">None</span>)?;
+        Ok(embeddings.remove(<span class="hi">0</span>))
+    }
+}</pre>
+    </div>
+    <p>The <code class="inline">embed()</code> method is built for batches — you hand it a <code class="inline">Vec</code> of strings and get back a <code class="inline">Vec</code> of vectors, one per input, so it can process many pieces of text efficiently in one pass. We only ever want to embed one query at a time here, so we wrap our single string in a one-element <code class="inline">vec![...]</code>, and then need to pull that single result back out.</p>
+    <div class="concept">
+      <span class="tag">rust concept — Vec::remove</span>
+      <p><code>embeddings.remove(0)</code> takes ownership of the element at index <code>0</code> and returns it, shifting every element after it one slot to the left to close the gap. That shifting is what makes <code>remove</code> an O(n) operation on a <code>Vec</code> — fine here, since our vector only ever has one element, but worth remembering before you reach for <code>remove(0)</code> in a hot loop over a large collection.</p>
+      <p>It's easy to confuse with two lookalikes: indexing with <code>embeddings[0]</code> only <em>borrows</em> the element (and panics if you then try to also own it while the vector exists), and <code>.pop()</code> only ever removes the <em>last</em> element. <code>remove</code> is the one that lets you take ownership of a value from the middle — or, as here, from the front — of a <code>Vec</code>.</p>
+    </div>
+    <p>We now have a way to turn any string into a 384-number vector. Next: a place to send that vector.</p>
+  </section>
+
+  <section id="store">
+    <h2><span class="num">4</span> Querying Qdrant and applying the boost</h2>
+    <p>This is the biggest file in the project, so we'll build it in layers: first a plain semantic search, then the boosted version, then the <code class="inline">Product</code> type we'll hand back to the rest of the program.</p>
+    <h3>Connecting</h3>
+    <div class="code-panel">
+      <div class="filename">src/qdrant_store.rs</div>
+      <pre><span class="kw">use</span> anyhow::Result;
+<span class="kw">use</span> qdrant_client::Qdrant;
+<span class="kw">use</span> qdrant_client::qdrant::{QueryPointsBuilder, PrefetchQueryBuilder,
+    FormulaBuilder, Expression, ScoredPoint, point_id::PointIdOptions, value::Kind};
+
+<span class="kw">pub const</span> COLLECTION_NAME: &amp;str = <span class="hi">"hm_products"</span>;
+<span class="kw">const</span> DENSE_VECTOR: &amp;str = <span class="hi">"dense"</span>;
+<span class="kw">const</span> PREFETCH_LIMIT: u64 = <span class="hi">100</span>;
+
+<span class="kw">pub struct</span> Store {
+    client: Qdrant,
+}
+
+<span class="kw">impl</span> Store {
+    <span class="kw">pub fn</span> connect(url: &amp;str) -&gt; Result&lt;Self&gt; {
+        <span class="kw">let</span> client = Qdrant::from_url(url).build()?;
+        Ok(Self { client })
+    }
+}</pre>
+    </div>
+    <p>Qdrant's Rust client talks gRPC, which by default listens on port <code class="inline">6334</code> — not the <code class="inline">6333</code> REST port you'd use from Python or curl. Easy to trip over the first time.</p>
+    <h3>A plain semantic search</h3>
+    <div class="code-panel">
+      <div class="filename">src/qdrant_store.rs (inside impl Store)</div>
+      <pre>    <span class="kw">pub async fn</span> semantic_search(&amp;<span class="kw">self</span>, query_vector: Vec&lt;f32&gt;, limit: u64)
+        -&gt; Result&lt;Vec&lt;ScoredPoint&gt;&gt;
+    {
+        <span class="kw">let</span> response = <span class="kw">self</span>.client
+            .query(
+                QueryPointsBuilder::new(COLLECTION_NAME)
+                    .query(query_vector)
+                    .using(DENSE_VECTOR)
+                    .limit(limit)
+                    .with_payload(<span class="hi">true</span>),
+            )
+            .await?;
+
+        Ok(response.result)
+    }</pre>
+    </div>
+    <p>This alone gives you ordinary meaning-based search: find the vectors nearest to the query vector. It's also the baseline we'll compare the boosted results against later.</p>
+    <h3>Boosting: prefetch, then re-rank with a formula</h3>
+    <p>Qdrant's <em>formula query</em> lets you fetch a wide pool of semantic candidates and then re-score them server-side using payload fields — no need to pull everything back to Rust and re-sort it by hand.</p>
+    <div class="code-panel">
+      <div class="filename">src/qdrant_store.rs (inside impl Store)</div>
+      <pre>    <span class="kw">pub async fn</span> boosted_search(
+        &amp;<span class="kw">self</span>,
+        query_vector: Vec&lt;f32&gt;,
+        popularity_weight: f32,
+        recency_weight: f32,
+        limit: u64,
+    ) -&gt; Result&lt;Vec&lt;ScoredPoint&gt;&gt; {
+        <span class="kw">let</span> formula = FormulaBuilder::new(Expression::sum_with([
+            Expression::score(),
+            Expression::mult_with([
+                Expression::constant(popularity_weight),
+                Expression::variable(<span class="hi">"popularity"</span>),
+            ]),
+            Expression::mult_with([
+                Expression::constant(recency_weight),
+                Expression::variable(<span class="hi">"recency"</span>),
+            ]),
+        ]))
+        .add_default(<span class="hi">"popularity"</span>, <span class="hi">0.0</span>)
+        .add_default(<span class="hi">"recency"</span>, <span class="hi">0.0</span>);
+
+        <span class="kw">let</span> response = <span class="kw">self</span>.client
+            .query(
+                QueryPointsBuilder::new(COLLECTION_NAME)
+                    .add_prefetch(
+                        PrefetchQueryBuilder::default()
+                            .query(query_vector)
+                            .using(DENSE_VECTOR)
+                            .limit(PREFETCH_LIMIT),
+                    )
+                    .query(formula)
+                    .limit(limit)
+                    .with_payload(<span class="hi">true</span>),
+            )
+            .await?;
+
+        Ok(response.result)
+    }</pre>
+    </div>
+    <p>Reading it top to bottom: <em>prefetch</em> grabs the 100 semantically closest products; the <em>formula</em> then re-scores that pool as <code class="inline">score + popularity_weight × popularity + recency_weight × recency</code>; <code class="inline">.add_default(...)</code> covers products missing one of those payload fields, so the query never errors on incomplete data.</p>
+    <h3>Shaping results into a <code class="inline">Product</code></h3>
+    <p>A <code class="inline">ScoredPoint</code> is a fairly raw, generic Qdrant type. We want something with named fields our own code can work with.</p>
+    <div class="code-panel">
+      <div class="filename">src/qdrant_store.rs</div>
+      <pre><span class="kw">#[derive(Debug, Clone, Default)]</span>
+<span class="kw">pub struct</span> Product {
+    <span class="kw">pub</span> id: String,
+    <span class="kw">pub</span> name: String,
+    <span class="kw">pub</span> product_type: String,
+    <span class="kw">pub</span> colour: String,
+    <span class="kw">pub</span> detail_desc: String,
+    <span class="kw">pub</span> score: f32,
+    <span class="kw">pub</span> popularity: f64,
+    <span class="kw">pub</span> recency: f64,
+    <span class="kw">pub</span> raw_similarity: Option&lt;f32&gt;,
+}</pre>
+    </div>
+    <p><code class="inline">raw_similarity</code> is worth a note: Qdrant only ever hands us the final <em>boosted</em> score. If we want to show the user "here's how close a match this was <em>before</em> we nudged it for popularity," we have to reconstruct it ourselves, by rearranging the same formula:</p>
+    <div class="code-panel">
+      <div class="filename">the same formula, solved for the unknown</div>
+      <pre>score           = raw_similarity + w1*popularity + w2*recency
+raw_similarity  = score - w1*popularity - w2*recency</pre>
+    </div>
+    <div class="code-panel">
+      <div class="filename">src/qdrant_store.rs</div>
+      <pre><span class="kw">impl</span> Product {
+    <span class="kw">pub fn</span> from_boosted(point: &amp;ScoredPoint, popularity_weight: f32, recency_weight: f32) -&gt; Self {
+        <span class="kw">let mut</span> product = Product::from(point);
+        <span class="kw">let</span> raw = product.score
+            - popularity_weight * product.popularity <span class="kw">as</span> f32
+            - recency_weight * product.recency <span class="kw">as</span> f32;
+        product.raw_similarity = Some(raw);
+        product
+    }
+}</pre>
+    </div>
+    <p>That leans on a plain <code class="inline">From&lt;&amp;ScoredPoint&gt;</code> conversion, which reads the payload fields out of Qdrant's generic key-value map:</p>
+    <div class="code-panel">
+      <div class="filename">src/qdrant_store.rs</div>
+      <pre><span class="kw">impl</span> From&lt;&amp;ScoredPoint&gt; <span class="kw">for</span> Product {
+    <span class="kw">fn</span> from(point: &amp;ScoredPoint) -&gt; Self {
+        <span class="kw">let</span> payload = &amp;point.payload;
+        Product {
+            id: point_id_key(point).unwrap_or_else(|| <span class="hi">"?"</span>.into()),
+            name: payload_str(payload, <span class="hi">"prod_name"</span>)
+                .or_else(|| payload_str(payload, <span class="hi">"name"</span>))
+                .unwrap_or_default(),
+            product_type: payload_str(payload, <span class="hi">"product_type"</span>).unwrap_or_default(),
+            colour: payload_str(payload, <span class="hi">"colour"</span>).unwrap_or_default(),
+            detail_desc: payload_str(payload, <span class="hi">"detail_desc"</span>).unwrap_or_default(),
+            score: point.score,
+            popularity: payload_f64(payload, <span class="hi">"popularity"</span>).unwrap_or(<span class="hi">0.0</span>),
+            recency: payload_f64(payload, <span class="hi">"recency"</span>).unwrap_or(<span class="hi">0.0</span>),
+            raw_similarity: <span class="kw">None</span>,
+        }
+    }
+}</pre>
+    </div>
+    <h3>Turning an opaque point ID into a plain string</h3>
+    <p>A Qdrant point's ID can be either a number or a UUID, wrapped in a few layers of <code class="inline">Option</code>. This helper unwraps it safely, without ever taking ownership away from the <code class="inline">ScoredPoint</code> we were only lent:</p>
+    <div class="code-panel">
+      <div class="filename">src/qdrant_store.rs</div>
+      <pre><span class="kw">fn</span> point_id_key(point: &amp;ScoredPoint) -&gt; Option&lt;String&gt; {
+    <span class="kw">let</span> options = point.id.as_ref()?.point_id_options.as_ref()?;
+    Some(<span class="kw">match</span> options {
+        PointIdOptions::Num(n) =&gt; n.to_string(),
+        PointIdOptions::Uuid(u) =&gt; u.clone(),
+    })
+}</pre>
+    </div>
+    <div class="concept">
+      <span class="tag">rust concept — .as_ref() and the AsRef trait</span>
+      <p>This function only <em>borrows</em> <code>point</code> (<code>&amp;ScoredPoint</code>) — it doesn't own it, and it's not allowed to move anything out of it. But <code>point.id</code> is an <code>Option&lt;PointId&gt;</code>, and writing <code>point.id?</code> would try to <em>move</em> the <code>PointId</code> out of a struct we only borrowed, which the compiler won't allow.</p>
+      <p><code>Option::as_ref(&amp;self) -&gt; Option&lt;&amp;T&gt;</code> solves exactly this: it converts an <code>&amp;Option&lt;T&gt;</code> into an <code>Option&lt;&amp;T&gt;</code> — same <code>Some</code>/<code>None</code> shape, but now holding a <em>reference</em> instead of the value itself. Nothing gets moved, so the borrow checker is satisfied, and the <code>?</code> operator can still short-circuit to <code>None</code> if either layer is empty.</p>
+      <p>This method exists because of a more general pattern in Rust: many types implement the <strong><code>AsRef&lt;T&gt;</code></strong> trait, which just means "I can hand you a cheap reference to a <code>T</code> without giving up ownership of myself." <code>String</code> implements <code>AsRef&lt;str&gt;</code>, <code>Vec&lt;T&gt;</code> implements <code>AsRef&lt;[T]&gt;</code>, and so on. It's the same idea you'll see in function signatures like <code>fn greet(name: impl AsRef&lt;str&gt;)</code>, which accept both a <code>String</code> and a <code>&amp;str</code> — the caller doesn't need to know or care which one you actually stored. <code>Option::as_ref()</code> is that same "give me a reference, not the value" idea, specialized to work with <code>Option</code>.</p>
+    </div>
+    <p>Two more small helpers pull typed values out of Qdrant's generic payload map, and we're done with this file's core logic:</p>
+    <div class="code-panel">
+      <div class="filename">src/qdrant_store.rs</div>
+      <pre><span class="kw">fn</span> payload_str(payload: &amp;HashMap&lt;String, Value&gt;, key: &amp;str) -&gt; Option&lt;String&gt; {
+    <span class="kw">match</span> payload.get(key)?.kind.as_ref()? {
+        Kind::StringValue(s) =&gt; Some(s.clone()),
+        _ =&gt; <span class="kw">None</span>,
+    }
+}
+
+<span class="kw">fn</span> payload_f64(payload: &amp;HashMap&lt;String, Value&gt;, key: &amp;str) -&gt; Option&lt;f64&gt; {
+    <span class="kw">match</span> payload.get(key)?.kind.as_ref()? {
+        Kind::DoubleValue(v) =&gt; Some(*v),
+        Kind::IntegerValue(v) =&gt; Some(*v <span class="kw">as</span> f64),
+        _ =&gt; <span class="kw">None</span>,
+    }
+}</pre>
+    </div>
+    <div class="tree-panel">
+      <span class="label">project so far</span>
+      <pre>hm-search/
+├── Cargo.toml
+└── src/
+    ├── main.rs
+    ├── embedder.rs        <span class="new">✓ done</span>
+    ├── qdrant_store.rs    <span class="new">✓ done</span>
+    └── rag.rs</pre>
+    </div>
+  </section>
+
+  <section id="rag">
+    <h2><span class="num">5</span> Handing results to an LLM</h2>
+    <p>Retrieval alone gives you a ranked table. To let someone ask "which of these would work for a wedding?" and get a real sentence back, we pass the retrieved products into a local LLM's prompt as grounding context — the "RAG" in retrieval-augmented generation. We use the <code class="inline">rig</code> crate to talk to a local Ollama server, so nothing leaves your machine and no API key is needed.</p>
+    <h3>Rendering products into a context block</h3>
+    <div class="code-panel">
+      <div class="filename">src/rag.rs</div>
+      <pre><span class="kw">use</span> crate::qdrant_store::Product;
+
+<span class="kw">pub fn</span> build_context(products: &amp;[Product]) -&gt; String {
+    <span class="kw">let mut</span> context = String::new();
+
+    <span class="kw">for</span> (i, p) <span class="kw">in</span> products.iter().enumerate() {
+        context.push_str(&amp;format!(
+            <span class="hi">"{}. {} | type: {} | colour: {} | popularity: {:.2} | recency: {:.2}\n"</span>,
+            i + <span class="hi">1</span>, p.name, p.product_type, p.colour, p.popularity, p.recency,
+        ));
+        <span class="kw">if</span> !p.detail_desc.is_empty() {
+            context.push_str(&amp;format!(<span class="hi">"   description: {}\n"</span>, p.detail_desc));
+        }
+    }
+    context
+}</pre>
+    </div>
+    <p>Plain text, not JSON — small models follow a short, human-readable list more reliably than they parse structured data, and it keeps the prompt compact.</p>
+    <h3>Asking the question</h3>
+    <div class="code-panel">
+      <div class="filename">src/rag.rs</div>
+      <pre><span class="kw">use</span> anyhow::Result;
+<span class="kw">use</span> rig::client::Nothing;
+<span class="kw">use</span> rig::prelude::*;
+<span class="kw">use</span> rig::providers::ollama;
+
+<span class="kw">pub async fn</span> answer_with_context(model: &amp;str, question: &amp;str, context: &amp;str) -&gt; Result&lt;String&gt; {
+    <span class="kw">let</span> client = ollama::Client::new(Nothing)?;
+
+    <span class="kw">let</span> preamble = format!(
+        <span class="hi">"You are a helpful shopping assistant. Answer using ONLY \
+         the product listings below. If they don't contain a good \
+         answer, say so instead of making one up.\n\nPRODUCTS:\n{context}"</span>
+    );
+
+    <span class="kw">let</span> agent = client.agent(model).preamble(&amp;preamble).build();
+    <span class="kw">let</span> response = agent.prompt(question).await?;
+
+    Ok(format!(<span class="hi">"{response}"</span>))
+}</pre>
+    </div>
+    <p><code class="inline">Nothing</code> is Rig's way of saying "this provider needs no API key" — appropriate for a local Ollama server. The instruction to answer <em>only</em> from the listed products matters more than it looks: it's what keeps a small local model from confidently inventing a product that was never retrieved.</p>
+    <div class="tree-panel">
+      <span class="label">project so far</span>
+      <pre>hm-search/
+├── Cargo.toml
+└── src/
+    ├── main.rs
+    ├── embedder.rs        ✓ done
+    ├── qdrant_store.rs    ✓ done
+    └── rag.rs             <span class="new">✓ done</span></pre>
+    </div>
+  </section>
+
+  <section id="assemble">
+    <h2><span class="num">6</span> Wiring it together in main.rs</h2>
+    <p>Everything above is a building block. <code class="inline">main.rs</code> is the CLI that decides what arguments to accept and in what order to call the blocks.</p>
+    <h3>The arguments</h3>
+    <div class="code-panel">
+      <div class="filename">src/main.rs</div>
+      <pre><span class="kw">use</span> clap::Parser;
+
+<span class="kw">#[derive(Parser, Debug)]</span>
+<span class="kw">#[command(author, version, about)]</span>
+<span class="kw">struct</span> Args {
+    <span class="cm">/// The search / question text</span>
+    query: String,
+
+    <span class="kw">#[arg(long, default_value_t = 0.05)]</span>
+    popularity_weight: f32,
+
+    <span class="kw">#[arg(long, default_value_t = 0.05)]</span>
+    recency_weight: f32,
+
+    <span class="kw">#[arg(long, default_value_t = 10)]</span>
+    limit: u64,
+
+    <span class="kw">#[arg(long, default_value = "http://localhost:6334")]</span>
+    qdrant_url: String,
+
+    <span class="kw">#[arg(long, default_value = "granite4.1:3b")]</span>
+    model: String,
+
+    <span class="kw">#[arg(long, default_value_t = false)]</span>
+    no_llm: bool,
+}</pre>
+    </div>
+    <p><code class="inline">clap</code>'s <code class="inline">derive</code> macro turns this struct into a full <code class="inline">--help</code>-documented CLI just from its field types and attributes — no argument-parsing code to write by hand.</p>
+    <h3>The pipeline</h3>
+    <div class="code-panel">
+      <div class="filename">src/main.rs</div>
+      <pre><span class="kw">#[tokio::main]</span>
+<span class="kw">async fn</span> main() -&gt; anyhow::Result&lt;()&gt; {
+    <span class="kw">let</span> args = Args::parse();
+
+    <span class="cm">// 1. embed the query</span>
+    <span class="kw">let</span> embedder = Embedder::new()?;
+    <span class="kw">let</span> query_vector = embedder.embed_query(&amp;args.query)?;
+
+    <span class="cm">// 2. boosted search against Qdrant</span>
+    <span class="kw">let</span> store = Store::connect(&amp;args.qdrant_url)?;
+    <span class="kw">let</span> points = store.boosted_search(
+        query_vector, args.popularity_weight, args.recency_weight, args.limit,
+    ).await?;
+
+    <span class="kw">let</span> products: Vec&lt;Product&gt; = points.iter()
+        .map(|p| Product::from_boosted(p, args.popularity_weight, args.recency_weight))
+        .collect();
+    print_results(&amp;products);
+
+    <span class="kw">if</span> args.no_llm {
+        <span class="kw">return</span> Ok(());
+    }
+
+    <span class="cm">// 3. hand the results to the LLM</span>
+    <span class="kw">let</span> context = rag::build_context(&amp;products);
+    <span class="kw">let</span> answer = rag::answer_with_context(&amp;args.model, &amp;args.query, &amp;context).await?;
+    println!(<span class="hi">"\n🤖 Answer:\n{answer}"</span>);
+
+    Ok(())
+}</pre>
+    </div>
+    <p>Notice the shape: each numbered step only depends on the step before it, and each one is a single call into a module we already finished and — separately — already understand. That's the payoff of splitting the file in the first place.</p>
+    <div class="concept">
+      <span class="tag">why #[tokio::main]?</span>
+      <p>Both the Qdrant client and Rig's Ollama client use <code>async</code> functions under the hood — they can pause while waiting on the network instead of blocking a whole thread. Rust doesn't ship a built-in way to actually <em>run</em> async code; <code>tokio</code> is the runtime that does it, and the <code>#[tokio::main]</code> macro is what lets an ordinary-looking <code>async fn main()</code> act as your program's entry point.</p>
+    </div>
+    <div class="tree-panel">
+      <span class="label">the finished project</span>
+      <pre>hm-search/
+├── Cargo.toml
+└── src/
+    ├── main.rs            <span class="new">CLI + pipeline</span>
+    ├── embedder.rs        text → 384-dim vector
+    ├── qdrant_store.rs    boosted search + Product
+    └── rag.rs             products → LLM answer</pre>
+    </div>
+  </section>
+
+  <section id="run">
+    <h2><span class="num">7</span> Running it</h2>
+    <p>With a Qdrant instance running locally and populated with an <code class="inline">hm_products</code> collection, and Ollama running with a model pulled:</p>
+    <div class="code-panel">
+      <div class="filename">terminal</div>
+      <pre>cargo run -- <span class="hi">"summer dress for a wedding"</span>
+
+<span class="cm"># skip the LLM step, just see the boosted table</span>
+cargo run -- <span class="hi">"summer dress for a wedding"</span> --no-llm
+
+<span class="cm"># favour recently-added items more heavily</span>
+cargo run -- <span class="hi">"summer dress for a wedding"</span> --recency-weight 0.2</pre>
+    </div>
+    <h3>What you actually built</h3>
+    <ul>
+      <li>An embedding wrapper that turns a query into a vector in the same space as your indexed data.</li>
+      <li>A Qdrant client that prefetches semantic candidates and re-ranks them server-side with a formula query.</li>
+      <li>A conversion layer (<code class="inline">From&lt;&amp;ScoredPoint&gt;</code>) that turns a generic database result into a typed struct your own code can reason about.</li>
+      <li>A RAG step that grounds a local LLM's answer in exactly the products you retrieved — nothing more.</li>
+      <li>Along the way: <code class="inline">Vec::remove</code> for taking ownership out of a collection, and <code class="inline">Option::as_ref()</code> / the <code class="inline">AsRef</code> trait for borrowing instead of moving.</li>
+    </ul>
+    <p>From here, natural next steps are a <code class="inline">compare_search</code> mode that shows how much the boost actually moved each result (semantic rank vs. boosted rank), or swapping the fixed weights for ones tuned against real click data.</p>
+  </section>
+
+</main>
+
+<footer>
+  Built as a Rust port of a Python retrieval project, keeping the same Qdrant collection and boosting formula. Toggle the theme button in the top bar for dark mode.
+</footer>
+
+<script>
+  (function(){
+    var btn = document.getElementById('theme-toggle');
+    var root = document.documentElement;
+
+    function currentTheme(){
+      var attr = root.getAttribute('data-theme');
+      if (attr === 'light' || attr === 'dark') return attr;
+      var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      return prefersDark ? 'dark' : 'light';
+    }
+
+    function apply(theme){
+      root.setAttribute('data-theme', theme);
+      try { localStorage.setItem('hm-search-theme', theme); } catch(e) {}
+    }
+
+    try {
+      var saved = localStorage.getItem('hm-search-theme');
+      if (saved === 'light' || saved === 'dark') root.setAttribute('data-theme', saved);
+    } catch(e) {}
+
+    btn.addEventListener('click', function(){
+      var next = currentTheme() === 'dark' ? 'light' : 'dark';
+      apply(next);
+    });
+  })();
+</script>
+
+</body>
+</html>
